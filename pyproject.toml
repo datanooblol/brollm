@@ -1,0 +1,9 @@
+[project]
+name = "brollm"
+version = "0.1.0"
+description = "When you think about light weight LLMs, call brollm!"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.39.17",
+]
