@@ -1,5 +1,5 @@
 from typing import Any, Dict, List
-import requests
+import httpx
 from .base import BaseLLM, BaseEmbedding
 
 class OllamaChat(BaseLLM):
@@ -25,7 +25,7 @@ class OllamaChat(BaseLLM):
     def run(self, system_prompt: str, messages: List[Dict[str, Any]]) -> str:
         all_messages = [self.SystemMessage(system_prompt)] + messages
         
-        response = requests.post(f'{self.base_url}/api/chat', json={
+        response = httpx.post(f'{self.base_url}/api/chat', json={
             "model": self.model_name,
             "messages": all_messages,
             "stream": False,
@@ -37,18 +37,22 @@ class OllamaChat(BaseLLM):
 class OllamaEmbedding(BaseEmbedding):
     def __init__(
             self,
-            model_name: str = "nomic-embed-text",
+            model_name: str = "nomic-embed-text:v1.5",
             base_url: str = "http://localhost:11434"
     ):
         self.model_name = model_name
         self.base_url = base_url
 
     def embed_text(self, text: str) -> List[float]:
-        response = requests.post(f'{self.base_url}/api/embeddings', json={
+        response = httpx.post(f'{self.base_url}/api/embed', json={
             "model": self.model_name,
-            "prompt": text
+            "input": text
         })
-        return response.json()['embedding']
+        return response.json()['embeddings'][0]
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        return [self.embed_text(text) for text in texts]
+        response = httpx.post(f'{self.base_url}/api/embed', json={
+            "model": self.model_name,
+            "input": texts
+        })
+        return response.json()['embeddings']
