@@ -14,3 +14,6 @@ dependencies = [
 dev = [
     "ipykernel>=6.30.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["brollm*"]
