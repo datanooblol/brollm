@@ -1,14 +1,42 @@
 # brollm
 
-A lightweight Python library providing unified interfaces for LLM models, embeddings, and rerankers. Built for AI agent development with consistent APIs across different providers.
+A lightweight, opinionated contract for talking to LLMs. We tell you the shape you should build
+in — pack a request, fetch a response, parse it into whatever your program needs — then get out
+of your way. Use it exactly as-is, or build on top of it. Either way, you're shipping faster.
+
+## v0.2.0 — a real shift, not a patch
+
+This version changes a lot from the last one, and on purpose. Here's the deal:
+
+- **One contract, not three.** `BaseContract` replaces `BaseLLM`, `BaseEmbedding`, and
+  `BaseReranker`. Same shape for chat, embeddings, reranking — whatever you're calling.
+- **You're in the driver's seat now.** `input_fn` packs the request and fetches the response —
+  context management, retries, the actual provider call, all yours. `output_fn` takes that
+  response and turns it into whatever shape your program actually needs — a string, a dataclass
+  with token counts, whatever. brollm doesn't guess for you anymore.
+- **Providers moved to [`cookbook/`](cookbook/).** AWS Bedrock and Ollama can (and do) change
+  their APIs without notice. Instead of brollm quietly breaking under you when that happens,
+  provider code lives as copy-paste, version-pinned recipes you control.
+
+Yeah, that's more you have to write than before. That's the point, not a shortcut we took. A
+generic base class can't know what *your* response object should look like, what *your* retry
+policy should be, or what *your* context window strategy is — you can, and you'll write it once,
+correctly, for your actual use case instead of fighting a one-size-fits-none abstraction. Less
+magic, more control, and you walk away actually understanding your own LLM layer instead of
+trusting a black box. That's a win.
 
 ## Features
 
-- **Unified Interface**: Same API across AWS Bedrock and Ollama
-- **LLM Models**: Chat completion with system prompts and message history
-- **Embeddings**: Text embedding generation for semantic search
-- **Rerankers**: Document reranking capabilities (base class ready)
-- **Lightweight**: Minimal dependencies, maximum flexibility
+- **`BaseContract`**: the one shape — `input_fn` in, `output_fn` out. Implement it your way, no
+  subclassing gymnastics required.
+- **`brollm.retry`**: a `@retry(...)` decorator for wrapping a flaky `input_fn` — exponential or
+  fixed backoff, jitter, exception filtering. Stop hand-rolling retry loops.
+- **`brollm.parsing.extract_codeblocks`**: pulls fenced codeblocks out of raw LLM text, even if
+  the model got cut off mid-stream and never closed the fence.
+- **Zero runtime dependencies.** brollm doesn't drag boto3 or httpx into your project just
+  because it knows what those libraries are.
+- **Provider recipes in [`cookbook/`](cookbook/)**: copy-paste, version-pinned integrations for
+  AWS Bedrock and Ollama — a fast start, not a dependency you're locked into.
 
 ## Installation
 
@@ -24,102 +52,62 @@ uv add brollm
 
 ## Quick Start
 
-### AWS Bedrock
+Build a contract with your own `input_fn` (pack + fetch) and `output_fn` (parse):
 
 ```python
-from brollm import BedrockChat, BedrockEmbedding
+from brollm import BaseContract
 
-# Chat completion
-chat = BedrockChat(model_name="us.meta.llama3-2-11b-instruct-v1:0")
-messages = [
-    chat.UserMessage("What is machine learning?"),
-    chat.AIMessage("Machine learning is..."),
-    chat.UserMessage("Give me an example")
-]
-response = chat.run("You are a helpful AI assistant", messages)
-print(response)
+def input_fn(system_prompt, messages):
+    # own your context management, call whatever provider you want
+    return provider_client.call(system_prompt, messages)
 
-# Embeddings
-embedding = BedrockEmbedding()
-vector = embedding.embed_text("Hello world")
-print(f"Embedding dimension: {len(vector)}")
+def output_fn(response):
+    # parse the raw response into whatever your program needs
+    return response["text"]
+
+chat = BaseContract(input_fn=input_fn, output_fn=output_fn)
+chat("You are a helpful assistant.", [{"role": "user", "content": "Hello!"}])
 ```
 
-### Ollama
+Same shape works for embeddings, reranking, anything — swap `input_fn`/`output_fn` for the call
+you're making.
+
+Want token usage, a custom dataclass, parsed codeblocks? That's what `output_fn` is for:
 
 ```python
-from brollm import OllamaChat, OllamaEmbedding
+from dataclasses import dataclass
+from brollm.parsing import extract_codeblocks
 
-# Chat completion
-chat = OllamaChat(model_name="qwen3:8b")
-messages = [
-    chat.UserMessage("Explain quantum computing"),
-    chat.AIMessage("Quantum computing uses..."),
-    chat.UserMessage("What are the applications?")
-]
-response = chat.run("You are a physics expert", messages)
-print(response)
+@dataclass
+class Tokens:
+    input: int
+    output: int
 
-# Embeddings
-embedding = OllamaEmbedding(model_name="nomic-embed-text")
-vectors = embedding.embed_texts(["Hello", "World", "AI"])
-print(f"Generated {len(vectors)} embeddings")
+@dataclass
+class ResponseModel:
+    content: str
+    usage: Tokens
+
+def output_fn(response):
+    return ResponseModel(
+        content=response["text"],
+        usage=Tokens(input=response["usage"]["input"], output=response["usage"]["output"]),
+    )
 ```
 
-### Multimodal Support (Bedrock)
+Want retries on a flaky `input_fn`? Wrap it:
 
 ```python
-from brollm import BedrockChat
+from brollm.retry import retry
 
-chat = BedrockChat()
-with open("image.jpg", "rb") as f:
-    image_bytes = f.read()
-
-messages = [
-    chat.UserMessage("Describe this image", image_bytes=image_bytes, image_format="jpeg")
-]
-response = chat.run("You are a vision AI assistant", messages)
-print(response)
+@retry(max_attempts=3, on=(TimeoutError, ConnectionError))
+def input_fn(system_prompt, messages):
+    return provider_client.call(system_prompt, messages)
 ```
 
-## Provider Switching
-
-Switch between providers without changing your code structure:
-
-```python
-# Use Bedrock
-llm = BedrockChat(temperature=0.7)
-
-# Switch to Ollama
-llm = OllamaChat(temperature=0.7)
-
-# Same interface for both
-messages = [llm.UserMessage("Hello AI!")]
-response = llm.run("You are helpful", messages)
-```
-
-## Configuration
-
-### Bedrock
-```python
-chat = BedrockChat(
-    model_name="us.meta.llama3-2-11b-instruct-v1:0",
-    temperature=0.7,
-    region_name="us-west-2",
-    aws_access_key_id="your-key",  # Optional, uses default AWS config
-    aws_secret_access_key="your-secret",  # Optional
-    aws_session_token="your-token"  # Optional
-)
-```
-
-### Ollama
-```python
-chat = OllamaChat(
-    model_name="qwen3:8b",
-    temperature=0.7,
-    base_url="http://localhost:11434"  # Default Ollama endpoint
-)
-```
+For ready-made, version-pinned examples (AWS Bedrock, Ollama) built on this exact pattern, see
+[`cookbook/`](cookbook/) — copy the recipe into your project rather than depending on brollm for
+it.
 
 ## License
 

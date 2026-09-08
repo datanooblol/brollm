@@ -1,6 +1,7 @@
 import asyncio
+
 import httpx
-from typing import List
+
 
 async def ollama_chat_async(prompt: str, model: str = "qwen3:8b", base_url: str = "http://localhost:11434") -> str:
     async with httpx.AsyncClient(timeout=60.0) as client:
