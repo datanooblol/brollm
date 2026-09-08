@@ -1,7 +1,9 @@
 import asyncio
-import httpx
 import re
 import time
+
+import httpx
+
 
 def extract_code(text, language):
     """Extract code blocks between ```language and ```"""
